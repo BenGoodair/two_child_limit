@@ -717,6 +717,57 @@ final_data <- bind_rows(cleaned_data, y2021, y2022, y2023, y2024)%>%
                 percent_impacted = (as.numeric(Child.Tax.Credit)+Universal.Credit)/affected_population*100,
                 percent_impacted_did = as.numeric(ifelse(year<2018, 0, percent_impacted)))
 
+
+####children in need ####
+cin <- read.csv(curl("https://raw.githubusercontent.com/BenGoodair/two_child_limit/refs/heads/main/Data/Raw/b1_children_in_need_2013_to_2024.csv"))%>%
+  dplyr::filter(la_name!="")%>%
+  dplyr::mutate(Local.authority = la_name %>%
+                  gsub('&', 'and', .) %>%
+                  gsub('[[:punct:] ]+', ' ', .) %>%
+                  gsub('[0-9]', '', .)%>%
+                  toupper() %>%
+                  gsub("CITY OF", "",.)%>%
+                  gsub("UA", "",.)%>%
+                  gsub("COUNTY OF", "",.)%>%
+                  gsub("ROYAL BOROUGH OF", "",.)%>%
+                  gsub("LEICESTER CITY", "LEICESTER",.)%>%
+                  gsub("UA", "",.)%>%
+                  gsub("DARWIN", "DARWEN", .)%>%
+                  gsub("COUNTY DURHAM", "DURHAM", .)%>%
+                  gsub("AND DARWEN", "WITH DARWEN", .)%>%
+                  gsub("NE SOM", "NORTH EAST SOM", .)%>%
+                  gsub("N E SOM", "NORTH EAST SOM", .)%>%
+                  str_trim())%>%
+  dplyr::rename(year =time_period)%>%
+  dplyr::select(Local.authority, year, Anypoint_child_rate)
+
+referals <- read.csv(curl("https://raw.githubusercontent.com/BenGoodair/two_child_limit/refs/heads/main/Data/Raw/c1_children_in_need_referrals_and_rereferrals_2013_to_2024.csv"))%>%
+  dplyr::filter(la_name!="")%>%
+  dplyr::mutate(Local.authority = la_name %>%
+                  gsub('&', 'and', .) %>%
+                  gsub('[[:punct:] ]+', ' ', .) %>%
+                  gsub('[0-9]', '', .)%>%
+                  toupper() %>%
+                  gsub("CITY OF", "",.)%>%
+                  gsub("UA", "",.)%>%
+                  gsub("COUNTY OF", "",.)%>%
+                  gsub("ROYAL BOROUGH OF", "",.)%>%
+                  gsub("LEICESTER CITY", "LEICESTER",.)%>%
+                  gsub("UA", "",.)%>%
+                  gsub("DARWIN", "DARWEN", .)%>%
+                  gsub("COUNTY DURHAM", "DURHAM", .)%>%
+                  gsub("AND DARWEN", "WITH DARWEN", .)%>%
+                  gsub("NE SOM", "NORTH EAST SOM", .)%>%
+                  gsub("N E SOM", "NORTH EAST SOM", .)%>%
+                  str_trim())%>%
+  dplyr::rename(year =time_period)%>%
+  dplyr::select(Local.authority, year, Referrals_rate)
+
+cin <- merge(cin, referals, by=c("Local.authority", "year"), all=T)
+final_data <- merge(final_data, cin, , by=c("Local.authority", "year"), all=T)
+
+
+
 # Sort data by Local.authority and year
 final_data <- final_data[order(final_data$Local.authority, final_data$year), ]
 
@@ -730,6 +781,9 @@ final_data$lagged_CTC_per<- ave(final_data$percent_impacted_ctc, final_data$Loca
 final_data$lagged_both_per<- ave(final_data$percent_impacted, final_data$Local.authority, FUN = function(x) c(NA, head(x, -1)))
 
 
+andersdata <- final_data %>%
+  dplyr::select(Local.authority,year, Universal.Credit,Child.Tax.Credit, affected_population, percent_impacted, children_in_care,children_in_care_1_under,children_in_care_1_4,children_in_care_5_9,children_in_care_10_15,children_in_care_16plus,started_under_1,started_1_to_4,started_5_to_9,started_10_to_15, started_over_16, Anypoint_child_rate, Referrals_rate, under_19_population, under_5_population)%>%
+  write.csv(., "~/Library/CloudStorage/OneDrive-Nexus365/Documents/GitHub/GitHub_new/two_child_limit/Data/Anders_Data.csv")
 
 ####analysis####
 
@@ -754,12 +808,12 @@ reg <- final_data%>%
   dplyr::select(Local.authority, treatment_mean)
 
 reg2 <- final_data%>%
-  dplyr::mutate(children_in_care_per_18 = children_in_care/under_19_population)%>%
+  dplyr::mutate(children_in_care_per_18 = as.numeric(started_under_5)/under_5_population)%>%
   dplyr::filter(year==2018)%>%
   select(children_in_care_per_18, Local.authority)
 
 reg3 <- final_data%>%
-  dplyr::mutate(children_in_care_per_23 = children_in_care/under_19_population)%>%
+  dplyr::mutate(children_in_care_per_23 = as.numeric(started_under_5)/under_5_population)%>%
   dplyr::filter(year==2023)%>%
   select(children_in_care_per_23, Local.authority)
 
@@ -850,6 +904,31 @@ ggplot(plot_df, aes(x=dose, acrt)) +
   geom_hline(yintercept=0, color="red", linetype="dashed") +
   geom_line() +
   theme_bw()
+
+
+
+
+growth <- final_data%>%
+  select(percent_impacted_did, Local.authority)%>%
+  group_by(Local.authority)%>%
+  dplyr::summarise(treatment_mean = mean(as.numeric(percent_impacted_did), na.rm=T))%>%
+  dplyr::ungroup()%>%
+  dplyr::filter(treatment_mean!=0)%>%
+  dplyr::select(Local.authority, treatment_mean)%>%
+  dplyr::full_join(., final_data, by="Local.authority")%>%
+  dplyr::mutate(time = year-2010,
+                care_per = total_in_care_under_5/under_5_population)
+  
+
+summary(lmerTest::lmer((as.numeric(Anypoint_child_rate))~treatment_mean*time+(1+time|Local.authority),  data=growth, na.action=na.exclude))
+
+
+
+
+
+
+
+
 
 did_model <- plm(
   as.numeric(percent_in_care) ~ Universal.Credit_mean * post + factor(time), # DiD interaction term with fixed effects
@@ -1099,12 +1178,12 @@ three <- figure %>%  dplyr::mutate(two_child_impact_quantiles =cut(percent_impac
   geom_vline(xintercept = 2017)+
   theme_bw()+
   labs(x="Year", y="Children in care under 5 yrs old (%)",
-       title = "Areas which were impacted most had largest increases in children in care since the reform",
+       title = "Areas which were impacted most kinda? had largest increases in children in care since the reform",
        fill= "Quartile of two-child limit impact",
        colour= "Quartile of two-child limit impact",
        group= "Quartile of two-child limit impact"
   )+
-  scale_x_continuous(breaks=c(2011,2012,2013,2014,2015,2016,2017,2018,2019,2020,2021,2022,2023))+
+  scale_x_continuous(breaks=c(2011,2012,2013,2014,2015,2016,2017,2018,2019,2020,2021,2022,2023,2024))+
   theme(legend.position="bottom")
   
 yes <- cowplot::plot_grid(one, two, three, ncol=1)
@@ -1197,8 +1276,9 @@ figure %>%  dplyr::mutate(two_child_impact_quantiles_percent =cut(Proportion.Bot
   labs(x="Year", y="Children_in_care")
 
 
-final_data%>%
 
-
+ggplot(final_data, aes(x=year, y=(as.numeric(started_under_5)+as.numeric(started_5_to_9)+as.numeric(started_10_to_15)+as.numeric(started_over_16))/under_19_population))+
+  geom_line(aes(group=Local.authority),colour = "grey", alpha=4)+
+  stat_summary()
 
 
